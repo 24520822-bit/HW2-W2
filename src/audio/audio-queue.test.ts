@@ -46,4 +46,79 @@ describe('AudioTaskQueue', () => {
     await expect(following).resolves.toMatchObject({ duration: 1 });
     expect(fetchAudio).toHaveBeenCalledTimes(2);
   });
+
+  it('skips a queued item cancelled before its turn', async () => {
+    let releaseDecode!: (buffer: AudioBuffer) => void;
+    const firstDecode = new Promise<AudioBuffer>((resolve) => {
+      releaseDecode = resolve;
+    });
+    const fetchAudio = vi.fn(async (url: string) => bufferResponse(url === 'first' ? 1 : 2));
+    const decodeAudioData = vi
+      .fn()
+      .mockImplementationOnce(() => firstDecode)
+      .mockResolvedValue({ duration: 1 } as AudioBuffer);
+    const queue = new AudioTaskQueue({ fetchAudio, decodeAudioData });
+    const first = queue.enqueue('first');
+    await vi.waitFor(() => expect(decodeAudioData).toHaveBeenCalledTimes(1));
+    const controller = new AbortController();
+    const cancelled = queue.enqueue('cancelled', controller.signal);
+    const last = queue.enqueue('last');
+
+    controller.abort();
+    releaseDecode({ duration: 1 } as AudioBuffer);
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    await Promise.all([first, last]);
+
+    expect(fetchAudio.mock.calls.map(([url]) => url)).toEqual(['first', 'last']);
+  });
+
+  it('aborts the active fetch when its signal is aborted', async () => {
+    const fetchAudio = vi.fn((url: string, signal?: AbortSignal) => {
+      if (url !== 'active') return Promise.resolve(bufferResponse(2));
+      return new Promise<ReturnType<typeof bufferResponse>>((_, reject) => {
+        signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+          { once: true },
+        );
+      });
+    });
+    const decodeAudioData = vi.fn(async () => ({ duration: 1 }) as AudioBuffer);
+    const queue = new AudioTaskQueue({ fetchAudio, decodeAudioData });
+    const controller = new AbortController();
+    const active = queue.enqueue('active', controller.signal);
+    const following = queue.enqueue('following');
+
+    await vi.waitFor(() => expect(fetchAudio).toHaveBeenCalledTimes(1));
+    controller.abort();
+
+    await expect(active).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(following).resolves.toMatchObject({ duration: 1 });
+    expect(fetchAudio.mock.calls.map(([url]) => url)).toEqual(['active', 'following']);
+  });
+
+  it('does not resolve a cancelled decode and waits for it before continuing', async () => {
+    let finishDecode!: (buffer: AudioBuffer) => void;
+    const decodeInProgress = new Promise<AudioBuffer>((resolve) => {
+      finishDecode = resolve;
+    });
+    const fetchAudio = vi.fn(async () => bufferResponse(1));
+    const decodeAudioData = vi
+      .fn()
+      .mockImplementationOnce(() => decodeInProgress)
+      .mockResolvedValue({ duration: 2 } as AudioBuffer);
+    const queue = new AudioTaskQueue({ fetchAudio, decodeAudioData });
+    const controller = new AbortController();
+    const cancelled = queue.enqueue('decoding', controller.signal);
+    const following = queue.enqueue('following');
+
+    await vi.waitFor(() => expect(decodeAudioData).toHaveBeenCalledTimes(1));
+    controller.abort();
+    expect(fetchAudio).toHaveBeenCalledTimes(1);
+
+    finishDecode({ duration: 1 } as AudioBuffer);
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(following).resolves.toMatchObject({ duration: 2 });
+    expect(fetchAudio).toHaveBeenCalledTimes(2);
+  });
 });
