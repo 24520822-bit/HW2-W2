@@ -9,13 +9,17 @@ export class AudioPlaybackController {
     this.analyser.fftSize = FFT_SIZE;
   }
 
-  play(buffer: AudioBuffer): void {
+  play(buffer: AudioBuffer, onEnded?: () => void): void {
     this.stop();
 
     const source = this.context.createBufferSource();
     source.buffer = buffer;
     this.activeSource = source;
-    source.onended = () => this.finish(source);
+    source.onended = () => {
+      if (this.activeSource !== source) return;
+      this.finish(source);
+      onEnded?.();
+    };
 
     try {
       this.analyser.connect(this.context.destination);

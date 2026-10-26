@@ -79,6 +79,17 @@ describe('AudioPlaybackController', () => {
     expect(analyser.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it('notifies the caller after natural playback cleanup', () => {
+    const { context, sources } = createAudioContextMock();
+    const player = new AudioPlaybackController(context);
+    const onEnded = vi.fn();
+    player.play({ duration: 1 } as AudioBuffer, onEnded);
+
+    sources[0].onended?.call(sources[0] as unknown as AudioScheduledSourceNode, new Event('ended'));
+
+    expect(onEnded).toHaveBeenCalledTimes(1);
+  });
+
   it('stops and disconnects the active source when playback is cancelled', () => {
     const { analyser, context, sources } = createAudioContextMock();
     const player = new AudioPlaybackController(context);
