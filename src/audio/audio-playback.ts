@@ -3,14 +3,18 @@ export const FFT_SIZE = 512;
 export class AudioPlaybackController {
   readonly analyser: AnalyserNode;
   private activeSource: AudioBufferSourceNode | null = null;
+  private playRequest = 0;
 
   constructor(private readonly context: AudioContext) {
     this.analyser = context.createAnalyser();
     this.analyser.fftSize = FFT_SIZE;
   }
 
-  play(buffer: AudioBuffer, onEnded?: () => void): void {
-    this.stop();
+  async play(buffer: AudioBuffer, onEnded?: () => void): Promise<void> {
+    const request = ++this.playRequest;
+    this.stopActiveSource();
+    if (this.context.state === 'suspended') await this.context.resume();
+    if (request !== this.playRequest) return;
 
     const source = this.context.createBufferSource();
     source.buffer = buffer;
@@ -32,6 +36,11 @@ export class AudioPlaybackController {
   }
 
   stop(): void {
+    this.playRequest += 1;
+    this.stopActiveSource();
+  }
+
+  private stopActiveSource(): void {
     const source = this.activeSource;
     if (!source) return;
 

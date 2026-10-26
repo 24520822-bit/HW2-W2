@@ -9,7 +9,7 @@ export interface AudioVisualizerAppOptions {
   cancelFrame?: typeof cancelAnimationFrame;
 }
 
-type TrackState = 'queued' | 'ready' | 'playing' | 'failed' | 'cancelled';
+type TrackState = 'queued' | 'ready' | 'starting' | 'playing' | 'failed' | 'cancelled';
 
 interface Track {
   id: number;
@@ -195,26 +195,33 @@ export function mountAudioVisualizerApp(
       playingTrack.state = 'ready';
       updateTrack(playingTrack, 'Ready');
     }
+    const buffer = track.buffer;
     playingTrack = track;
-    try {
-      playback.play(track.buffer, () => {
+    track.state = 'starting';
+    updateTrack(track, 'Starting playback…');
+    void playback
+      .play(buffer, () => {
         if (playingTrack !== track) return;
         playingTrack = null;
         track.state = 'ready';
         updateTrack(track, 'Ready');
         visualizer.stop();
+      })
+      .then(() => {
+        if (playingTrack !== track) return;
+        track.state = 'playing';
+        updateTrack(track, 'Playing');
+        visualizer.start();
+        message.textContent = `Playing ${track.url}`;
+      })
+      .catch((error: unknown) => {
+        if (playingTrack !== track) return;
+        playingTrack = null;
+        track.state = 'ready';
+        updateTrack(track, `Playback failed: ${errorMessage(error)}`);
+        message.textContent = `Playback failed: ${errorMessage(error)}`;
+        visualizer.stop();
       });
-      track.state = 'playing';
-      updateTrack(track, 'Playing');
-      visualizer.start();
-      message.textContent = `Playing ${track.url}`;
-    } catch (error) {
-      playingTrack = null;
-      track.state = 'ready';
-      updateTrack(track, `Playback failed: ${errorMessage(error)}`);
-      message.textContent = `Playback failed: ${errorMessage(error)}`;
-      visualizer.stop();
-    }
   });
 
   root.querySelector<HTMLButtonElement>('#stop-playback')!.addEventListener('click', () => {

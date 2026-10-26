@@ -140,6 +140,7 @@ describe('audio visualizer app integration', () => {
     expect(requested).toEqual([firstUrl, failedUrl, lastUrl]);
 
     rowFor(root, lastUrl).querySelector<HTMLButtonElement>('[data-action="play"]')!.click();
+    await vi.waitFor(() => expect(requestFrame).toHaveBeenCalledTimes(1));
     frames[0](16);
     root.querySelector<HTMLButtonElement>('#stop-playback')!.click();
 

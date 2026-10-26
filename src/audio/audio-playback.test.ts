@@ -17,6 +17,7 @@ function createAudioContextMock() {
     stop: ReturnType<typeof vi.fn>;
   }> = [];
   const context = {
+    state: 'running' as AudioContextState,
     destination: {},
     createAnalyser: vi.fn(() => analyser),
     createBufferSource: vi.fn(() => {
@@ -31,6 +32,7 @@ function createAudioContextMock() {
       sources.push(source);
       return source;
     }),
+    resume: vi.fn(async () => undefined),
   };
 
   return {
@@ -50,12 +52,12 @@ describe('AudioPlaybackController', () => {
     expect(player.analyser.frequencyBinCount).toBe(256);
   });
 
-  it('plays a buffer through a newly created source and the analyser', () => {
+  it('plays a buffer through a newly created source and the analyser', async () => {
     const { analyser, context, sources } = createAudioContextMock();
     const player = new AudioPlaybackController(context);
     const buffer = { duration: 1 } as AudioBuffer;
 
-    player.play(buffer);
+    await player.play(buffer);
 
     expect(context.createBufferSource).toHaveBeenCalledTimes(1);
     expect(sources[0].buffer).toBe(buffer);
@@ -64,10 +66,10 @@ describe('AudioPlaybackController', () => {
     expect(sources[0].start).toHaveBeenCalledTimes(1);
   });
 
-  it('disconnects and releases the source when playback ends', () => {
+  it('disconnects and releases the source when playback ends', async () => {
     const { analyser, context, sources } = createAudioContextMock();
     const player = new AudioPlaybackController(context);
-    player.play({ duration: 1 } as AudioBuffer);
+    await player.play({ duration: 1 } as AudioBuffer);
     const source = sources[0];
 
     source.onended?.call(source as unknown as AudioScheduledSourceNode, new Event('ended'));
@@ -79,21 +81,43 @@ describe('AudioPlaybackController', () => {
     expect(analyser.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('notifies the caller after natural playback cleanup', () => {
+  it('notifies the caller after natural playback cleanup', async () => {
     const { context, sources } = createAudioContextMock();
     const player = new AudioPlaybackController(context);
     const onEnded = vi.fn();
-    player.play({ duration: 1 } as AudioBuffer, onEnded);
+    await player.play({ duration: 1 } as AudioBuffer, onEnded);
 
     sources[0].onended?.call(sources[0] as unknown as AudioScheduledSourceNode, new Event('ended'));
 
     expect(onEnded).toHaveBeenCalledTimes(1);
   });
 
-  it('stops and disconnects the active source when playback is cancelled', () => {
+  it('resumes a suspended audio context before starting its source', async () => {
+    let finishResume!: () => void;
+    const resume = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishResume = resolve;
+        }),
+    );
+    const { context, sources } = createAudioContextMock();
+    Object.defineProperty(context, 'state', { value: 'suspended', configurable: true });
+    Object.defineProperty(context, 'resume', { value: resume });
+    const player = new AudioPlaybackController(context);
+
+    const pendingPlayback = player.play({ duration: 1 } as AudioBuffer);
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(context.createBufferSource).not.toHaveBeenCalled();
+    finishResume();
+    await pendingPlayback;
+    expect(sources[0].start).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops and disconnects the active source when playback is cancelled', async () => {
     const { analyser, context, sources } = createAudioContextMock();
     const player = new AudioPlaybackController(context);
-    player.play({ duration: 1 } as AudioBuffer);
+    await player.play({ duration: 1 } as AudioBuffer);
     const source = sources[0];
 
     player.stop();
@@ -105,12 +129,12 @@ describe('AudioPlaybackController', () => {
     expect(analyser.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('cleans up the old source before starting a new track', () => {
+  it('cleans up the old source before starting a new track', async () => {
     const { analyser, context, sources } = createAudioContextMock();
     const player = new AudioPlaybackController(context);
 
-    player.play({ duration: 1 } as AudioBuffer);
-    player.play({ duration: 2 } as AudioBuffer);
+    await player.play({ duration: 1 } as AudioBuffer);
+    await player.play({ duration: 2 } as AudioBuffer);
 
     expect(sources).toHaveLength(2);
     expect(sources[0].stop).toHaveBeenCalledTimes(1);
